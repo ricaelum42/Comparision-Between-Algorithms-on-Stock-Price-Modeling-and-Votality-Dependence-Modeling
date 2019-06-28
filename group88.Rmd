@@ -1,0 +1,1306 @@
+---
+title: "Comparision Between Algorithms On Stock Price Modeling and Votality Dependence Modeling"
+author: 
+    - Yingying Chen
+    - Chen Yuan
+output: 
+  pdf_document:
+    number_sections: true
+documentclass: article
+bibliography: ref.bib
+---
+
+\begin{abstract}
+The stock of a corporation is constituted of the equity stock of its owners. A single share of the stock represents fractional ownership of the corporation in proportion to the total number of shares. Given the history price, we would like to forecast the stock prices. In time series, $SARIMA$ is popular choice. However, if we apply $SARIMA$ into real data, the prediction is not always as good as expected. In this project, we would like to use a different method, decompose the stock price into three pieces, conquer each one and unit all three. In addition, for usual GARCH models, the marginal distributions are estimated. However, usually in real case, stocks from same industry may have their prices depend on each other. Therefore, in this project, we tried to model dependence of stock prices using copula approach. Our analysis shows that k-nearest neighbour is our best model in fitting one single stock, and GARCH dependence model works best when there are more stocks in the same industry.
+\end{abstract}
+
+
+\section{Introduction}
+
+Votality is one of the key variables in modelling time series data. It is necessary in stock exchange, asset evaluation and portfolio management. One of the simple ways to modeling votality is using a GARCH model. However, in this case, only marginal distribition is estimated. A copula model is usually a good choice of modelling dependence.\cite{Ouyang2009} Therefore, a Copula-Garach model to model residual dependence can be used.\cite{Jondeau2006}. For past works, copula is fitted using maximum likelihood or pseudo-likelihood (MPL) method\cite{Wei2016}, but in our analysis, we are using hierarchical modeling.
+
+Our data comes from yahoo finance, where the 91 selected stocks are both listed in The New York Stock Exchange (NYSE) and Toronto Stock Exchange (TSX). However, since we are interested in modeling based on data in the past 5 years, stocks that are on the market before 2012 were used, which eventually leads us to 63 stocks.    
+The file "stock price.dta" contains 5923 rows and 63 columns, where the number of "NA" varies in different columns. The data can be categorized by industry:
+
+* **Column 1-2**: Stocks from Electricity industry.
+* **Column 3-19**: Stocks from Energy industry.
+* **Column 20-28**: Stocks from Finance industry.
+* **Column 29-51**: Stocks from Mining industry.
+* **Column 52-53**: Stocks from Paper Production industry.
+* **Column 54-56**: Stocks from Technology industry.
+* **Column 57-60**: Stocks from Telecommunications industry.
+* **Column 61-63**: Stocks from Transportation industry.
+
+To facilitate comparison between different models, we will pick one stock price data and ecompose the time series into three pieces,  seasonality, trend and random residuals; build a model to each of them and forecast; unit all three pieces(including predictions). To pick on specific stock, we used  $stress$ as our measurement, where
+
+\[stress = \frac{(\mathbf{Y}_t - \hat {\mathbf{Y}_t} )^T(\mathbf{Y}_t - \hat {\mathbf{Y}_t} )}{(\mathbf{Y}_t - \bar {\mathbf{Y}_t} )^T(\mathbf{Y}_t - \bar {\mathbf{Y}_t} )}\]
+
+$stress$ is the smaller the better (dividing the denominator is to better scale stress). Notice, since it is not the ordinary least squares regression, $stress$ is not bounded by 0 to 1
+
+In the paper, we will pick the stock \texttt{CAE}.
+
+\section{Methodology}
+
+\subsection{Comparison of models based on on single stock data}
+A time series can be decomposed into three pieces, seasonality, trend and random residual\cite{Cleveland1990}. 
+
+\[Y_t = S_t + T_t + R_t\]
+
+If we decompose \emph{CAE} time series, the visualization of these three pieces are shown as follows: 
+```{r, echo = FALSE, fig.height=5, fig.width=5}
+load("stockprice.rda")
+numNA <- apply(stockprice, 2, function(l){
+  length(which(is.na(l)==T))
+})
+set.seed(2018440)
+ind <- sample(1:79, 1)
+stock <- na.omit( stockprice[,ind])
+CAE <- ts(stock, end = c(2018, 4, 1), frequency = 365 )
+DecomSTL <- stl(CAE, "periodic")
+plot(DecomSTL)
+```
+
+\subsubsection{For seasonal $S_t$}
+Since seasonality is repeated, it is not necessary to build a model (in other words, the fit residuals are zero). When we do prediction, we just follow the seasonal trend and predict.
+
+\subsubsection{For trend $T_t$}
+The trend is clearly not linear. There are several methods to predict this part
+
+  * linear regression
+  
+  We can build model 
+  \[\mathbf{T} = \mathbf{X} \boldsymbol{ \beta} + \mathbf{e} \]
+  
+  where $\mathbf{X}$ represent time. $\hat{ \boldsymbol{ \beta}}$ can be found by minimizing $\mathbf{e}^T\mathbf{e}$
+  
+  \[\hat{ \boldsymbol{ \beta}} = (\mathbf{X}^T \mathbf{X})^{-1}\mathbf{X}^T\mathbf{T} \]
+
+ In our model
+  \[
+  \begin{array}{lcl}  
+  \widehat{T}_t &=& -1607.6913508 + 0.8047257 t  \\
+  && \\ 
+  (t) && (-117.7)~ ( 118.4) 
+  \end{array} 
+  \]
+  
+  * Natural Spline\cite{Hazewinkel2001}
+  
+  In the mathematical field of numerical analysis, Spline interpolation is a form of interpolation where the interpolate is a special type of piece wise polynomial called a spline. Spline interpolation is often preferred over polynomial interpolation because the interpolation error can be made small even when using low degree polynomials for the spline
+
+  We cut the data into several pieces, or call neighborhood. In each neighborhood, we fit a polynomial $p$ model. For example, in the $j$th neighborhood a $p$ degree polynomial would look like 
+  
+  \[\mu^{(j)}(x) = \beta^{(j)}_0 + \beta^{(j)}_1x + ... + \beta^{(j)}_Px^p, \forall x \in Nbhd_j\]
+  
+  Then $\mu(x)$ can be found as
+  
+  \[\mu(x) = \sum^J_{j = 1} I_{Nbhd_j}(x) \mu^{(j)}(x)\]
+  
+  Next, we would like to restrict the parameters by forcing the curves to meet each boundary, first derivatives, second derivatives, ... , $p-1$ derivatives. the degree freedom would be 
+  
+  \[J(p+1) - (p-1 + 1) K = K + p + 1\]
+  and this one called the $p$ degree spline. In natural spline, it forces the polynomials at either end to be fluctuate less by severely reducing their degree. A popular choice would be cubic smoothing spline, with the end to be a straight line. 
+
+  * KNN fitting\cite{Altman1992}
+  
+  The easy way to proceed is to fit a local average at every value $x = x_i$ in the data set. Values for other values of $x$ might be found by simple linear interpolation between these fitted values (i.e. simply
+"connect the dots"). One way to define a local neighborhood would be to find the $k$ nearest neighbors of that $x$ value. 
+
+  There are also some other methods to fit the trend, like \texttt{basic spline}, \texttt{smoothing spline}, \texttt{loess}, ... They are either cutting the field into pieces and connecting with restrictions or resetting the objective function and minimizing through optimization methods. We will not show all the details of the rest methods, but we would apply them in our package \texttt{tsDecom}. 
+  
+\subsubsection{For residuals}
+  
+A run test is to test the series stationary or not. The null hypothesis test is the series is stationary.    
+  Through the result we can find the p-value is smaller than 0.05, which means there is evidence against the null hypothesis test, the series is not stationary. In general, we take the difference of the series
+  The p value is larger than 0.05. The series is stationary. Then, we would like to fit $\triangle R_t$ with $ARMA$ model.
+  \[\triangle R_t = R_{t} - R_{t-1}\]
+  Auto regressive moving average (\texttt{ARMA}) model is fitted to time series data either to better understand the data or to predict future points in the series (forecasting). This model can only work on the stationary data.
+  
+  \[\triangle R_t - \phi_1 \triangle R_{t-1} - ...-\phi_p \triangle R_{t-p} = \epsilon_t + \theta_1\epsilon_{t-1} + \theta_q\epsilon_{t-q}\]
+  
+  $AIC$ is a criterion for model selection; the model with the lowest $AIC$ is preferred and it can be expressed as:
+\[AIC = 2k - 2log(\hat L) \]
+where $k$ is the number of parameters and $\hat L$ is maximum value of the likelihood function for the model.
+  
+  Actually, most of the time, to our prediction, the effect of $ARMA$ order is quite small. The main reason is that the residuals are too small comparing with trend and seasonality. Sometimes, the change of residuals can be ignored. What's more, high order model can make our computation too complex and sometimes even overfitted. Hence, in this paper, we would like to use $AR(1)$ model to fit the residual part. We have three ways to do that:
+  
+\paragraph{Basic $AR(1)$ model}
+\[\triangle R_t = \phi \triangle R_{t-1} + \epsilon_t \]
+  where $\epsilon_t \sim N(0, \sigma^2)$. It gives us $AR(1)$ model. 
+  \[
+\begin{array}{lcl}  
+\triangle {R}_t &=&  0.0006\triangle {R}_{t-1} + \epsilon_t  \\
+&& \\ 
+(se) && (0.0131) 
+\end{array} 
+  \]
+  
+  \[R_t =   0.0006(R_{t-1}  - R_{t-2}) + R_{t-1} + \epsilon_t, ~~\epsilon_t\sim N(0, 0.0304)\]
+  
+\paragraph{$AR(1)$ with $t$ distribution}
+	\[\triangle R_t = \phi \triangle R_{t-1} + \sigma \epsilon_t \]
+	However, this time, we would like to set $\epsilon_t \sim t(v)$ distribution, $v$ is the degree of freedom. Thus
+	
+\[f(\epsilon_t) = \frac{\Gamma(\frac{v+1}{2})}{\sqrt{v \pi}\Gamma(\frac{v}{2})}\left( 1+\frac{\epsilon_t^2}{v}\right) ^{-\frac{v+1}{2}}\]
+
+Consider the pdf of $\triangle R_1$, the first observations in the sample. This is a random variable with 0 mean and variance
+
+\[Var(\triangle R_1) = \frac{1}{1-\phi^2}Var(\epsilon_t) = \frac{1}{1-\phi^2} \frac{v}{v-2}\sigma^2 ~~~~~~\mbox{when v}~\geq 2 \]
+
+Since $\epsilon_t$ is t distribution. $\triangle R_1$ follows scaled $t$ distribution with variance $\frac{1}{1-\phi^2} \frac{v}{v-2}\sigma^2$
+	
+\[f(\triangle R_1) =  \frac{\Gamma(\frac{v+1}{2})}{\sqrt{v \pi}\Gamma(\frac{v}{2})}\left( 1+\frac{(1-\phi^2)\triangle R_1^2}{v\sigma^2}\right) ^{-\frac{v+1}{2}}\frac{\sqrt{1-\phi^2}}{\sigma} \]
+and
+\[f(\triangle R_k|\triangle R_{k-1}, \ldots, \triangle R_1) = f(\triangle R_k|\triangle R_{k-1})\]
+	 based on the Jacobian matrix and determinant and coefficient transformation
+	
+\[f(\triangle R_k|\triangle R_{k-1}) = \frac{\Gamma(\frac{v+1}{2})}{\sqrt{v \pi}\sigma \Gamma(\frac{v}{2})}\left( 1+\frac{(\triangle R_k - \phi \triangle R_{k-1})^2}{v\sigma^2}\right) ^{-\frac{v+1}{2}}\]
+
+   The likelihood can be found as:
+	
+\[L = \left( \frac{\Gamma(\frac{v+1}{2})}{\sqrt{v \pi}\Gamma(\frac{v}{2})}\right)^{n}\frac{1}{\sigma^n}\sqrt{1-\phi^2}\prod^n_{i=2} \left( 1+\frac{(\triangle R_i - \phi \triangle R_{i-1})^2}{v\sigma^2}\right) ^{-\frac{v+1}{2}}\left( 1+\frac{(1-\phi^2)\triangle R_1^2}{v\sigma^2}\right) ^{-\frac{v+1}{2}}\]
+	
+  log-likehood can be denoted as:
+  
+  \[{\cal L} = log(L)\]
+  
+  $\epsilon_t$ follows t distribution but unknown degree freedom $v$. By setting
+  
+  \[ 
+\frac{\partial {\cal L}}{\partial \phi} = 0; ~~
+\frac{\partial {\cal L}}{\partial v} = 0; ~~
+\frac{\partial {\cal L}}{\partial \sigma} = 0; ~~
+\sigma > 0 
+\]
+  we can use quasi-Newton method, Nelder Mead or some other optimization methods to find $\widehat{\phi}$, $\widehat{v}$ and $\widehat{\sigma}$.
+
+From $\texttt{optim\_proj()}$\cite{optimcheck}, we can find the likelihood function reaches the maximum.
+  
+  \[\widehat{\phi} \approx -0.0397 ~~ \widehat{v} \approx 3.296 ~~\mbox{and}~~\widehat{\sigma} \approx 0.115\]
+  
+  \[R_t = -0.0397(R_{t-1} - R_{t-2} ) + R_{t-1} + 0.115 \epsilon_t,  ~~\epsilon_t \sim t(3.296)\]
+  
+\paragraph{Regime switching model $AR(1)$}\cite{Hansen1997}
+  \[\triangle R_t = \delta_t\phi^E\triangle R_{t-1} +   (1-\delta_t) \phi^R\triangle R_{t-1} +\epsilon_t, ~~~~\epsilon_t\sim N(0,\sigma^2)  \]
+  where $\delta_t$ is
+  \[
+    \delta_t  = \left  \{
+    \begin{array}{lcl}  
+    1 ~~~~\triangle R_{t-1}\geq 0\\
+    && \\ 
+    0 ~~~~\triangle R_{t-1}\leq 0\\
+    \end{array} \right. 
+  \]
+  the first observations in the sample $\triangle R_1$  is a random variable with 0 mean and variance
+  \[Var(\triangle R_1) = \frac{\sigma^2}{1 - \left( \delta_t \phi^E + (1-\delta_t)\phi^R\right) ^2} = \kappa^2 \]
+  Hence, $f(\triangle R_1)$ can be found as
+  \[f(\triangle R_1) = \frac{1}{\sqrt{2\pi}\kappa}e^{-\frac{\triangle R_1^2}{2\kappa^2}} \]
+  and $f(\triangle R_k|\triangle R_{k-1},\ldots, \triangle R_1) = f(\triangle R_k|\triangle R_{k-1})$
+  \[ f(\triangle R_k|\triangle R_{k-1}) = \frac{1}{\sqrt{2\pi}\sigma}e^{-\frac{\left( \triangle R_k - (\delta_t \phi^E \triangle R_{k-1} + (1-\delta_t)\phi^R \triangle R_{k-1})\right) ^2}{2\sigma^2}}  ~~~~~ \mbox{where k $\geq$ 2} \]
+  Loglikehood function can be found as
+  \[{\cal L} = log(f(\triangle R_1)) + log(f(\triangle R_2|\triangle R_1)) + \ldots + log(f(\triangle R_n|\triangle R_{n-1}))\]
+  Thus
+  \[ 
+    \frac{\partial {\cal L}}{\partial \phi^E} = 0; ~~
+    \frac{\partial {\cal L}}{\partial \phi^R} = 0; ~~
+    \frac{\partial {\cal L}}{\partial \sigma} = 0; ~~
+    \sigma > 0 
+  \]
+  $\widehat{\phi}$, $\widehat{v}$ and $\widehat{\sigma}$ can be found through $\texttt{optim}$\cite{Belisle1992, Byrd1995, Fletcher1964, Nash1990, Nelder1965, Nocedal1990}
+
+\[\widehat{\phi}^E \approx -0.020 ~~ \widehat{\phi}^R = 0.022~~\mbox{and}~~ \widehat{\sigma} =   0.174\]
+
+From \texttt{optim\_ proj()}, we can find the likelihood function reaches the maximum.
+
+\[R_t = -0.02 \delta_t(R_{t-1} - R_{t-2} ) +   0.022(1-\delta_t)(R_{t-1} - R_{t-2} ) + R_{t-1} +\epsilon_t, ~~~~\epsilon_t\sim N(0, 0.174^2) \]
+
+
+
+
+\subsection{Dependence modelling}
+\subsubsection{Modelling Votality}
+Heteroscedasticity generally means that the variance of time-series data is not constant over time. To model the votality of stock price, we apply a simple GARCH(1,1) model with central t-distribution as residual disribution. The model architecture is as follows. 
+Let $s_{ti}$ denote the price of stock i on day t. In our analysis, we used the log return which can be calculated as $y_{ti} = log(s_{ti}) - log(s_{t-1i})$. Then the marginal model for returns on stock i is:
+$$
+\begin{split}
+y_{ti} &= \mu_i + \epsilon_{ti} \\
+\epsilon_{ti} &= \sigma_{ti} x_{ti} \\
+\sigma^2_{ti} &= \omega_i + \alpha_i \epsilon_{t-1i}^2 + \beta_i \sigma_{t-1i}^2 \\
+x_{ti} &\overset{iid}{\sim} t(\nu_i) \\
+\end{split}
+$$
+where the log-likelihood is\cite{mathworks}\cite{Bollerslev1987}
+$$
+l(\theta) = T log[\frac{\Gamma(\frac{\nu+1}{2})}{\sqrt{\pi(\nu-2)} \Gamma(\frac{\nu}{2})}] - \frac{1}{2}\Sigma_{t=1}^{T} log \sigma_t^2 - \frac{\nu+1}{2} \Sigma_{t=1}^T log[1 + \frac{\epsilon_t^2}{\sigma_t^2(\nu - 2)}]
+$$
+
+The basic GARCH(1,1) model was fitted using \texttt{rugarch} package. Our test using optim_proj shows that the degrees of freedom is not always optimized, but to facilite our analysis, we will stick with this estimate.
+
+\subsubsection{Modeling Dependence}
+Copula is one way of modelling the dependence between random variables. It is the joint distribution between marginally uniformly distributed variables. Considering $X_1, X_2,...,X_p$ are random variables with distribution function $F_1(x_1), ... F_p(x_p)$, then by Probability Integral Transform, $F_i(x_i) \overset{iid}{\sim} U(0,1)$. Then there exist a copula such $C$ such that $F(x_1, x_2, ..., x_p) = C(F_1(x_1), F_2(x_2), ..., F_p(x_p))$. 
+
+\paragraph{Gaussian Copula}
+Consider $u_i = F_i(x_i)$. Then the cdf of Gaussian Copula is defined by:
+$$
+C(u_1, u_2, ..., u_p; \Omega) = \Phi_{\Omega}(\Phi^{-1}(u_1), \Phi^{-1}(u_2), ..., \Phi^{-1}(u_p))
+$$
+and the density function of Gaussian Copula is.
+$$
+c(u_1, u_2, .., u_p; \Omega) = \frac{\psi_{\Omega}(\Phi^{-1}(u_1), \Phi^{-1}(u_2), ..., \Phi^{-1}(u_p))}{\psi(\Phi^{-1}(u_1))\psi(\Phi^{-1}(u_2))...\psi(\Phi^{-1}(u_p))}
+$$
+
+
+
+\paragraph{t-Copula}
+Similarly, the cdf of t-Copula is defined by:
+$$
+C(u_1, u_2, ..., u_p; \Omega, n) = T_{\Omega, n}(T_{n}^{-1}(u_1), T_{n}^{-1}(u_2), ..., T_{n}^{-1}(u_p))
+$$
+And the density function is:
+$$
+c(u_1, u_2, .., u_p; \Omega,n) = \frac{t_{\Omega,n}(T_{n}^{-1}(u_1), T_{n}^{-1}(u_2), ..., T_{n}^{-1}(u_p))}{t_{n}(T_{n}^{-1}(u_1))t_{n}(T_{n}^{-1}(u_2))t_{n}(T_{n}^{-1}(u_p))}
+$$
+\subsubsection{Copula-Garch Model}
+In ordinary Garch model, the marginal distributions are modeled. But in real life, stock prices usually depend on other stock prices within the same industry. To modeling the dependence of stock price, we model the dependence of through model residuals.   
+Consider $x_1, x_2, .., x_n$ are the residuals fitted using the garch model indicated above, then $x_{ti} \overset{iid}{\sim} t(x|\nu_i)$. By Probability Integral Transform, $u_{ti} = T(x|\nu_i) \overset{iid}{\sim} U(0,1)$. Dependency can be then modeled using Copula.   
+
+Let $\theta_i = (\alpha_i, \beta_i, \omega_i, \mu_i, \nu_i)$ denote the marginal GARCH parameters and $\xi$ denote the copula parameters, then the full set of parameters of the Copula-Garch model is $\Theta = (\theta_1, \theta_2, ..., \theta_D, \xi)$.
+
+The log likelihood of Copula Garch model is given as 
+$$
+l(\Theta | Y) = \Sigma_{t=1}^{T}\left( logf_D(z_t^{\Theta} | \Omega)  + \Sigma_{i=1}^{D}[logt(x_{ti}^{(\theta_i)} | \nu_i) - log\sigma_{ti}^{(\theta_i)} - logf(z_{ti}^{(\theta_i)})]\right)
+$$
+
+where $f_D$ stands for the multvariate density distribution and $f$ denotes the univaiate density distribution.
+
+\subsubsection{Sector-level hierarchical modeling}
+Since the number of parameters in $\Theta$ is usually to large that \texttt{optim} will overwhelm, we employed a sector-level hierarchical modeling algorithm using Expectation-Maximation algorithm to obtain an estimate of covariance matrix.   
+Suppose we have $D$ stocks and $K$ sectors. Consider $S_{tk}$ denotes the mean of sector k on day t and $S_t$ = $(S_{t1}, ..., S_{tk})$. Consider $z_t^{(k)} = (z_{t1}^{(k)}, ..., z_{tN_K}^{(k)})$ denote the transformed residuals on day $t$ of $N_k$ assets and $\sum_{k=1}^K N_k = D$. The hierarchical model for the transformed residuals is
+$$
+\begin{split}
+S_t & \overset{iid}{\sim} N(0, \Sigma) \\
+z_t^{(k)} | S_t &\overset{iid}{\sim} N(S_{tk}, \Psi_k)
+\end{split}
+$$
+Let $\Omega = (\Sigma, \Psi_1, ..., \Psi_k)$ denote the parameters of this model, then we can write an EM algorithm to find the MLE of $\Omega$.   
+In the E setup of EM algorithm, consider the missing data are $y_{obs} = Z$ and $y_{miss} = S = (S_1, ..., S_T)$. The log likelihood is
+$$
+\begin{split}
+l(\Omega|S, Z) &= -\frac{1}{2} \Sigma_{t=1}^T[S_t' \Sigma^{-1} S_t + log|\Sigma|] - \frac{1}{2} \Sigma_{k=1}^{K} \Sigma_{t=1}^T [(z_t^{(k)} - S_{tK})' \Psi_k^{-1}(z_t^{(k)} - S_{tK} + log|\Psi_k|)] \\
+&= -\frac{1}{2}[T log|\Sigma| + \Sigma_{t=1}^T tr(\Sigma^{-1}S_tS_t')] \\
+&- \frac{1}{2}\Sigma_{k=1}^K [T log |\Psi_k| + \Sigma_{t=1}^T [tr(\Psi_k^{-1}z_t^{(k)}z_t'^{(k)})  - S_{tk} tr(\Psi_k^{-1}(z_t^{(k)} J'_{N_k} + J_{N_k}z_t^{(k)'})) + S_{tk}^2tr(\Psi_k^{-1}J_{N_k}J'_{Nk})]]
+\end{split}
+$$
+The expectation of this loglikelihood is
+$$
+Q_m(\Omega) = -\frac{1}{2}[T log|\Sigma| + tr(\Sigma^{-1}\hat{A}^{(m)})] - \frac{1}{2}[Tlog|\Psi_k| + tr(\Psi_k^{-1}\hat{B_k}^{(m)})]
+$$
+where $\hat{A}^{(m)} = \Sigma_{t=1}^T \hat{\Sigma}^{(m)} + \hat{\mu}_t^{(m)}\hat{\mu}_t^{(m)'}$ and $\hat{B}^{(m)} = \Sigma_{t=1}^{T} z_t^{(k)}z_t^{(k)'} - \Sigma_{t=1}^{T} \hat{\mu_t} ^{(m)}(z_t^{(k)}J'_{Nk} + J_{N_k} z_t^{(k)'}) + \Sigma_{t=1}^T \hat{A_{kk}}^{(m)} J_{Nk} J_{Nk}'$.
+
+For the M step, we update $\hat{\Sigma}^{(m+1)} = T^{-1} \hat{A}^{(m)}$ and $\hat{\Psi}_k^{(m+1)} = T^{-1} \hat{B}_k^{(m)}$.
+
+\subsubsection{Evaluation of Forecasting Models}
+Considering that $S_t^{(W)} = (s_{t-W+1}, ..., s_t)$ denote the stock prices in the last W days, then we can estimate the parameters for GarchGC using algorithms described above. Thus, we are able to forecast the votalities and stock prices in the future. For doing $B$ times of forecasting, we are able to obtain a 95% prediction interval of the forecast distribution.   
+
+Let $p_{FC}(P_{t+k} | S_t^{(W)})$ denote the forescast distribution of $P_{t+k}$, where $P_{t+k}$ is the value of a given portfolio on day $t+k$. Considering $P_{t+k}^{(obs)}$ be the actual observed value on day $t+k$, then er are able to estimate the cdf of $P_{FC}$ by drawing $B$ iid samples from prediction.   
+
+If the GarchGC model is the true model for modeling dependence for our data, then we have a null hypothesis $H_0$ that $p_t \sim U(0,1)$. And based of Probability Integral Transform, we have $z_t = \Phi^{-1}(p_t) \sim N(0,1)$, which can be visually tested using QQ-plots and numerically tested by Shapiro-Wilk test.
+
+
+\section{Results}
+\subsection{Model-wised comparison}
+In above section, we decompose our data into three pieces and analysis each of them. Then, we would like to unit all of three to check the $stress$.
+<center>\begin{tabular}{c|c|c|c}
+\hline
+$R^2$ & lm & natal spine & KNN\\
+\hline
+AR(1) & 2.025 & 1.69 & 1.65\\
+\hline
+AR(1) with $t$ & 2.63 & 2.87 & 2.83\\
+\hline
+Regime switching model & 26.02 & 25.82 & 25.75\\
+\hline
+\end{tabular}
+
+From this table, we can find that basic AR(1) with KNN gives the best prediction.   
+Next we would like to test the residuals
+
+1. Box-Pierce test: Box-Pierce is an independent test. The null hypothesis is the time series independent. 
+
+2. Jarque-Bera test: The Jarque-Bera test is a test for normality. The null hypothesis is the time series follows normal distribution:
+\[JB = N(\frac{\widehat{\kappa}_3^2}{6} + \frac{\widehat{\kappa}_4^2}{24}) \sim \chi_2^2 \]
+where $\widehat{\kappa}_3 = \frac{1}{N}\sum_{i = 1}^N \widehat{\epsilon}_i^3$ and $\widehat{\kappa}_4 = \frac{1}{N}\sum_{i = 1}^N \widehat{\epsilon}_i^4$, and $\widehat{\epsilon}_i$ is the centralized data, $\widehat{\epsilon}_i = \frac{x_i - \mu}{\sigma}$. If $JB$ is larger than 6, we reject the null hypothesis at 0.05 confidence level.
+	
+3. Overfitting: The null hypothesis test is that the parameters of added terms are all equal to zero. 
+\[\varLambda = N\times ln\left(\frac{\widehat{\sigma}^2_p}{\widehat{\sigma}^2_{p+r}}  \right) \sim \chi_r^2 \]
+
+Residuals $\mathbf{Y} - \hat{\mathbf{Y}}$ fail all the test.
+
+\subsection{Dependence Modeling}
+Based on the qq-plots we have and the Shapiro-Wilk tests result(as in Appendix), we can generally conclude that the GarchGC model works better when there are more companies in the industry. In our case, modeling dependence works best on the mining sector. However, one thing to notice is that when analyzing the distribution of the forecast distribution model, at some somulation of $t+k$ days, none or all of our simulated values are smaller than or equal to the true stock price, and thus will give us \texttt{Inf} or \texttt{-Inf} when applying probability integral transform. To facilitate the hypothesis test, we remove these values in our normality analysis, which means that our analysis could be potentially biased.
+
+\section{Discussion}
+The prediction is not as good as expected, but if we go back to check the fitted residuals, we can find the residuals are too large and not stationary at all. We have two ways to fix this situation, one is to set residuals as zero, like hard margin in support vector machine or to give the bound of the $\epsilon_t$ generation, then the random $\epsilon_t$ would not dominate the residuals.
+<center>\begin{tabular}{c|c|c|c}
+\hline
+$R^2$ & lm & natal spine & KNN\\
+\hline
+AR(1) & 0.456 & 0.197 & 0.171\\
+\hline
+AR(1) with $t$ & 0.471 & 0.162 & 0.149\\
+\hline
+Regime switching model & 0.461 & 0.208 & 0.184\\
+\hline
+Hard Margin & 0.358 & 0.089 & 0.04\\
+\hline
+\end{tabular}
+
+The KNN gives the best prediction and all residuals test has passed. The fitted line is very close to the original data. However, this method has several short-comes:
+
+1. The data is decomposed into three pieces. However, these three parts are not necessarily independent to each other. Then, it gives us a lot of difficulty to estimate the variance. In finance, the volatility sometimes interests us more than the values.
+
+2. The smoothing can always fit the training set well. But to the test set, it may cause overfitting problem. 
+
+Our package \texttt{tsDecom} is based on the whole process. 
+
+
+For dependence modelling, our analysis did relatively succeesful on stocks in mining industry while remian unsuccessful in telecommunication industry. One thing to notice is that in our GARCH model, we assume that the residual is a centered t-distribution, but in real life, a skewed-t distribution is usually the case. One thing we could try in the future is using a archimedean copulas to fit the residuals, which may get us a better result rather than elliptical copulas.
+
+
+\newpage
+
+
+\bibliographystyle{plain}
+\nocite{*}
+\bibliography{ref}
+
+\newpage
+
+\section{Appendix}
+
+\subsection{Plot related to analysis}
+NA check   
+```{r, echo = F}
+load("stockprice.rda")
+numNA <- apply(stockprice, 2, function(l){
+  length(which(is.na(l)==T))
+})
+plot(numNA, pch = 19, main = "Number of NAs in each stock", ylab = "numbers")
+```
+
+```{r, echo = F}
+set.seed(2018440)
+ind <- sample(1:79, 1)
+colnames(stockprice)[ind]
+```
+
+```{r, echo = F, fig.height=5, fig.width=5}
+stock <- na.omit( stockprice[,ind])
+CAE <- ts(stock, end = c(2018, 4, 1), frequency = 365 )
+DecomSTL <- stl(CAE, "periodic")
+```
+
+```{r, echo  = F}
+Decom <- stl(CAE, "periodic")
+season <- Decom$time.series[,1]
+times <- time(CAE)
+fit_season <- loess(season ~ times, span = 0.01, control=loess.control(surface="direct"))
+pred_season <- predict(fit_season, data.frame(times))
+```
+
+
+Trend Fitting using different algorithms   
+
+```{r, echo = F, fig.width=4, fig.height=4, warning=FALSE}
+trend <- DecomSTL$time.series[,2]
+fitLinear <- lm(trend~times)
+plot(times, trend, pch = 19, col = "red")
+abline(coef(fitLinear), lwd = 2, lty = 2)
+legend(2011, 20, legend = c("data", "lm"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+pred_trend_lm <- predict(fitLinear, newdata = data.frame(times))
+```
+
+```{r, echo=F, fig.width=4, fig.height=4, warning=FALSE}
+library(splines)
+fitSmooth <- lm(trend ~ ns(times , df = 10))
+pred_trend_smooth <- predict(fitSmooth, newdata=data.frame(x = times))
+Xorder <- order(times )
+plot(times, trend, pch = 19, col = "red")
+lines(times[Xorder], pred_trend_smooth[Xorder], lwd = 2, lty = 2)
+legend(2006, 20, legend = c("data", "Smoothing"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+```
+
+```{r, echo=F, fig.width=4, fig.height=4, warning=FALSE}
+library(FNN)
+fitKNN <- knn.reg(times , y= trend, k=5)
+Xorder <- order(times )
+pred_trend_KNN <- fitKNN$pred
+plot(times , trend, col="red", pch = 19)
+lines(times[Xorder], pred_trend_KNN[Xorder], lwd=2, lty = 2)
+legend(2011, 20, legend = c("data", "KNN"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+```
+
+
+```{r, echo = F}
+library(tseries)
+res <- DecomSTL$time.series[,3]
+runs.test(factor(sign(res)))
+```
+
+```{r, echo = F}
+diffRes <- diff(res)
+runs.test(factor(sign(diffRes)))
+```
+
+```{r, echo=F}
+model <- arima(diffRes, c(1,0,0), include.mean = F)
+```
+
+
+```{r, echo=F}
+set.seed(2018440)
+predAR <- function(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                   sd = sqrt(model$sigma2),  bound = NULL){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+    }
+  }else{
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+        }
+      }
+    }
+  }
+  R
+}
+predAR1 <- predAR(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                  sd = sqrt(model$sigma2))
+```
+
+
+Optim Check for AR(1) Model with t distribution   
+```{r, echo=F, warning=F}
+library(optimCheck)
+Lfun <- function(par = par, Y = Y){
+  sig <- par[1]
+  phi <- par[2]
+  v <- par[3]
+  Yn <- Y[-1]
+  Yn_1 <- Y[-length(Y)]
+  n <- length(Y)
+  L <- n*(log(gamma((v+1)/2)) - log(gamma(v/2)) - 0.5*log(v*pi)) - n*log(sig) - (v+1)/2*sum(log(1+(Yn - phi*Yn_1)^2/(v*sig^2))) - (v+1)/2*log(1+(1-phi^2)*Y[1]^2/(sig^2*v))
+  L <- -L
+  return(L)
+}
+
+optL <- optim(c(0.5, 0.5,3), Lfun,Y= diffRes)
+optim_proj(optL$par,fun = function(par) Lfun(par = par, Y = diffRes) )
+```
+
+```{r, echo=F}
+set.seed(2018440)
+predLogAR <- function(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1], bound = NULL ){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+    }
+  }else{
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+        }
+      }
+    }
+  }
+  R
+}
+predLogAR1 <- predLogAR(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1])
+```
+
+Optim check for regime switching model AR(1)   
+
+```{r, echo=F, warning=F}
+Rfun <- function(par = par, Y = Y){
+  phiE <- par[1]
+  phiR <- par[2]
+  sig <- par[3]
+  L <- 0
+  for(i in 2:length(Y)){
+    if(Y[i-1]>=0){
+      delta <- 1
+    }else{delta <- 0}
+    L <- L- log(sig) -(Y[i] - (delta*phiE*Y[i-1] + (1 - delta)*phiR*Y[i-1]) )^2/(2*sig^2)
+  }
+  L <- -L
+  return(L)
+}
+
+optR <- optim(c(1, 1,1), Rfun, Y= diffRes)
+optim_proj(optR$par,fun = function(par) Rfun(par = par, Y = diffRes) )
+```
+
+```{r, echo=F}
+set.seed(2018440)
+predRSAR <- function(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3], bound = NULL ){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+      else{delta <- 0}
+      R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+        (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+    }
+  }else{
+    for(i in 3 : len){
+      if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+      else{delta <- 0}
+      R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+        (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+          else{delta <- 0}
+          R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+            (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+        }
+      }
+    }
+  }
+  R
+  
+}
+predRSAR1 <- predRSAR(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3])
+``` 
+
+```{r, echo=F}
+lmAR <- pred_season + pred_trend_lm + predAR1
+s1 <- sum( (CAE - lmAR)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalAR <- pred_season + pred_trend_smooth + predAR1
+s2 <- sum( (CAE - NaturalAR)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNAR <- pred_season + pred_trend_KNN + predAR1
+s3 <- sum( (CAE - KNNAR)^2)/ sum( (CAE - mean(CAE))^2 )
+lmLog <- pred_season + pred_trend_lm + predLogAR1
+s4 <- sum( (CAE - lmLog)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalLog <- pred_season + pred_trend_smooth + predLogAR1
+s5 <- sum( (CAE - NaturalLog)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNLog <- pred_season + pred_trend_KNN + predLogAR1
+s6 <- sum( (CAE - KNNLog)^2)/ sum( (CAE - mean(CAE))^2 )
+lmRS <- pred_season + pred_trend_lm + predRSAR1
+s7 <- sum( (CAE - lmRS)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalRS <- pred_season + pred_trend_smooth + predRSAR1
+s8 <- sum( (CAE - NaturalRS)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNRS <- pred_season + pred_trend_KNN + predRSAR1
+s9 <- sum( (CAE - KNNRS)^2)/ sum( (CAE - mean(CAE))^2 )
+```
+
+Fitted AR(1) with KNN   
+```{r, echo = F}
+plot(CAE, col = "red", type = "l", ylim = extendrange(c(CAE,KNNAR)))
+lines(times[Xorder], KNNAR[Xorder])
+legend(2006, 25, legend = c("data", "KNN"), col = c("red", "black"),
+       lty = c(1,1))
+```
+
+```{r, echo = F}
+predAR1 <- predAR(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                  sd = sqrt(model$sigma2), bound = c(-3,3))
+predLogAR1 <- predLogAR(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1], bound = c(-3,3) )
+predRSAR1 <- predRSAR(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3], bound = c(-3,3) )
+lmAR <- pred_season + pred_trend_lm + predAR1
+s1 <- sum( (CAE - lmAR)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalAR <- pred_season + pred_trend_smooth + predAR1
+s2 <- sum( (CAE - NaturalAR)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNAR <- pred_season + pred_trend_KNN + predAR1
+s3 <- sum( (CAE - KNNAR)^2)/ sum( (CAE - mean(CAE))^2 )
+lmLog <- pred_season + pred_trend_lm + predLogAR1
+s4 <- sum( (CAE - lmLog)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalLog <- pred_season + pred_trend_smooth + predLogAR1
+s5 <- sum( (CAE - NaturalLog)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNLog <- pred_season + pred_trend_KNN + predLogAR1
+s6 <- sum( (CAE - KNNLog)^2)/ sum( (CAE - mean(CAE))^2 )
+lmRS <- pred_season + pred_trend_lm + predRSAR1
+s7 <- sum( (CAE - lmRS)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalRS <- pred_season + pred_trend_smooth + predRSAR1
+s8 <- sum( (CAE - NaturalRS)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNRS <- pred_season + pred_trend_KNN + predRSAR1
+s9 <- sum( (CAE - KNNRS)^2)/ sum( (CAE - mean(CAE))^2 )
+# hard margin
+lm0 <- pred_season + pred_trend_lm
+s10 <- sum( (CAE - lm0)^2)/ sum( (CAE - mean(CAE))^2 )
+Natural0 <- pred_season + pred_trend_smooth
+s11 <- sum( (CAE - Natural0)^2)/ sum( (CAE - mean(CAE))^2 )
+KNN0 <- pred_season + pred_trend_KNN
+s12 <- sum( (CAE - KNN0)^2)/ sum( (CAE - mean(CAE))^2 )
+```
+
+```{r, echo = F}
+plot(CAE, col = "red", type = "l", ylim = extendrange(c(CAE,KNNLog)))
+lines(times[Xorder], KNNAR[Xorder])
+lines(times[Xorder], KNN0[Xorder], col = "blue")
+legend(2006, 25, legend = c("data", "KNN bound", "KNN hard margin"), col = c("red", "black", "blue"),
+       lty = c(1,1,1))
+```
+
+
+
+
+
+Optim check for the rugarch package 
+```{r, tidy=TRUE, message=FALSE, warning=FALSE, echo=FALSE}
+library(group88)
+library(xts)
+library(optimCheck)
+load("pricecopy.Rda")
+pricecopy <- as.xts(pricecopy)
+
+time <- c("2012-01-03", "2017-12-31")
+S <- pricecopy[paste0(time, collapse = "/"),] # data
+S <- na.omit(S)
+
+Y <- getreturns(S, "log")
+T <- nrow(Y)
+D <- ncol(Y)
+
+garch_basic <- ugarchspec(variance.model =list(model = "sGARCH", garchOrder=c(1,1)),
+                          mean.model = list(armaOrder=c(0,0)),
+                          distribution.model = "std")
+
+fit.garch <- lapply(Y, function(x) ugarchfit(garch_basic, x))
+
+eps <- as.matrix(do.call(merge, lapply(fit.garch, residuals)))
+sigma2 <- as.matrix(do.call(merge, lapply(fit.garch, sigma)))^2
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+# -----------------------MLE checck rugarch package-------------------------------------------
+objfun <- function(x) {
+  garch.loglik(x[1], x[2], x[3], x[4], eps, sigma2)
+}
+
+for(i in 1:D) {
+  Xfit <- fit.garch[[i]]@fit$coef[c("omega", "alpha1", "beta1", "shape")]
+  oproj <- optim_proj(fun = objfun,  
+              xsol = Xfit, 
+              maximize = FALSE,
+              xrng = .5,
+              plot = FALSE)  
+  print(summary(oproj))
+  
+}
+```
+
+Distribution check for residuals and the transformed residuals   
+
+```{r, echo=FALSE, warning=FALSE,message=FALSE, fig.height= 4}
+#------------------------test residual distribution---------------------------------------------
+X <- as.matrix(do.call(merge, lapply(fit.garch, residuals, standardize = TRUE)))
+par(mfrow=c(3, 3))
+
+for(i in 1:D) {
+  hist(X[, i], probability = TRUE, main = sprintf("Residual Density of stock %d", i))
+  lines(seq(-5, 5, length = 100), dnorm(seq(-5, 5, length = 100)))
+}
+
+
+U <- sapply(1:D, function(i) U <- pt(X[,i], df = fit.garch[[i]]@fit$coef["shape"]))
+
+for(i in 1:D) {
+  hist(U[, i], probability = TRUE, main = sprintf("Dist of F(x) stock %d", i))
+  lines(seq(-1, 1, length = 100), dunif(seq(-1, 1, length = 100)))
+}
+```
+
+```{r, echo=FALSE, warning=FALSE,message=FALSE, fig.height= 4}
+Z <- qnorm(U)
+
+par(mfrow=c(3, 3))
+for(i in 1:D) {
+  hist(Z[, i], probability = TRUE, main = sprintf("Trans Residual Dist %d", i))
+  lines(seq(-5, 5, length = 100), dnorm(seq(-5, 5, length = 100)))
+}
+
+par(mfrow=c(1, 1))
+
+```
+
+
+
+Fitting check and distribution check for the sector-level hierarchical modeling   
+
+```{r, tidy=TRUE, message=FALSE, warning=FALSE, echo=FALSE}
+#------------------------sector level hierarchical modelling ----------------------
+group <- c(rep(1,2), rep(2, 17), rep(3, 9), rep(4, 23), rep(5, 2), rep(6, 3), rep(7, 4), rep(8, 3))
+
+T <- nrow(Y)
+D <- ncol(Y)
+
+
+S.sector <- sapply(1: length(unique(group)), function(i) {
+  groupi <- group == i
+  Si <- Z[, groupi]
+  rowMeans(Si)
+})
+
+row.names(S.sector) <- as.character(row.names(X))
+
+
+sigma0 <- var(S.sector)
+Psi0 <- lapply(1:8, function(x) {
+  Zk <- Z[,group == x]
+  cor(Zk)
+})
+
+
+L.cur <- -Inf
+L.prev <-0
+while(abs(L.cur - L.prev) > 0.1) {
+  L.prev <- L.cur
+  
+  S.cur <- S.expect(sigma0, Psi0, Z, group)
+  A <- hier.A(S.cur)
+  B <- hier.B(S.cur, Z, group)
+  
+  sigma0 <- A / T
+  Psi0 <- lapply(B, function(x) x/T)
+  
+  L.cur <- hier.logLik(S.cur, Z, sigma0, Psi0, group)
+}
+
+Vfull <- hier.var(sigma0, Psi0, group)
+
+Var.sector <- lapply(1:length(unique(group)), function(i) {
+  ind <- rep(FALSE, ncol(Vfull))
+  ind[1:length(group)] <- group == i
+  Vfull[ind, ind]
+  
+})
+
+
+#----------------Test mdodel performance---------------------------------------
+B <- 200
+m <- 40
+
+stock.name <- colnames(S)
+
+Y.sim <- lapply(1:B, function(b) {
+  sim <- Garchgc.sim(m, fit.garch, Var.sector, D)
+  colnames(sim) <- colnames(Y)
+  sim
+})
+
+par(mfrow = c(2,2))
+
+tm <- index(pricecopy)
+start <- match(time[1], as.character(tm))
+past <- tm[start:(start+T-1)]
+future <- tm[(start+T):(start+T+m-1)]
+
+
+for(i in 1:D) {
+  Ys <- Y[,i]
+  Ys. <- sapply(Y.sim, function(y) y[,i])
+  Ys.mean <- rowMeans(Ys.)
+  Ys.CI <- apply(Ys., 1, function(x) quantile(x, probs = c(0.025, 0.975)))
+  plot(past, Ys, type = "l", xlim = range(c(past, future)), xlab = "", ylab = "", main = stock.name[i]) 
+  polygon(c(future, rev(future)), c(Ys.CI[1,], rev(Ys.CI[2,])),
+        border = NA, col = "grey80") 
+  lines(future, Ys.mean, col = "royalblue3")
+  lines(future, Ys.CI[1,], col = "grey50") 
+  lines(future, Ys.CI[2,], col = "grey50")
+  legend("bottomright", bty = "n", lty = rep(1, 3),
+       col = c("black", "royalblue3", "grey50"),
+       legend = c("Actual Return", "Avarage Simulated Return",
+                  "95% CI"))
+}
+```
+
+
+```{r, echo=FALSE, fig.height=4, message=FALSE, warning=FALSE}
+tm <- index(pricecopy)
+start <- match(time[1], as.character(tm))
+past <- tm[start:(start+T-1)]
+future <- tm[(start+T+1):(start+T+m+1)]
+S.actual <- as.matrix(pricecopy[future, ])
+
+S.start <- log(S)
+S.start <- as.matrix(S.start[nrow(S), ])
+
+S.sim <- lapply(Y.sim, function(y){
+  log.sim <- log(S.actual[-41,]) + y
+  exp(log.sim)
+})
+
+pt <- lapply(S.sim, function(s) {
+  s <= S.actual[-1,]
+})
+
+
+pt <- Reduce("+", pt)/ 200
+zt <- qnorm(pt)
+
+par(mfrow = c(2,2))
+
+stock.name <- colnames(S)
+
+stock.names <- numeric(0)
+p.val <- numeric(0)
+
+
+for(i in 1:D) {
+  zz <- zt[,i]
+  zz <- zz[!is.infinite(zz)]
+  if(length(zz) == 0) next
+  if(is.na(zz)) next
+  k <- shapiro.test(zz) 
+  stock.names <- c(stock.names,  stock.name[i])
+  p.val <- c(p.val, k$p.value)
+  qqnorm(zz, main = stock.name[i])
+}
+```
+
+shapiro-wilk test result:   
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+shapiro.result <- matrix(c(stock.names, p.val), ncol=2)
+colnames(shapiro.result) <- c("stock", "p-val")
+kable(shapiro.result)
+
+```
+
+\subsection{Analysis Code}
+
+```{r, eval = F, tidy=TRUE}
+load("stockprice.rda")
+numNA <- apply(stockprice, 2, function(l){
+  length(which(is.na(l)==T))
+})
+plot(numNA, pch = 19, main = "Number of NAs in each stock", ylab = "numbers")
+set.seed(2018440)
+ind <- sample(1:79, 1)
+colnames(stockprice)[ind]
+stock <- na.omit( stockprice[,ind])
+CAE <- ts(stock, end = c(2018, 4, 1), frequency = 365 )
+DecomSTL <- stl(CAE, "periodic")
+plot(DecomSTL)
+Decom <- stl(CAE, "periodic")
+season <- Decom$time.series[,1]
+times <- time(CAE)
+fit_season <- loess(season ~ times, span = 0.01, control=loess.control(surface="direct"))
+pred_season <- predict(fit_season, data.frame(times))
+trend <- DecomSTL$time.series[,2]
+fitLinear <- lm(trend~times)
+plot(times, trend, pch = 19, col = "red")
+abline(coef(fitLinear), lwd = 2, lty = 2)
+legend(2011, 20, legend = c("data", "lm"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+pred_trend_lm <- predict(fitLinear, newdata = data.frame(times))
+library(splines)
+fitSmooth <- lm(trend ~ ns(times , df = 10))
+pred_trend_smooth <- predict(fitSmooth, newdata=data.frame(x = times))
+Xorder <- order(times )
+plot(times, trend, pch = 19, col = "red")
+lines(times[Xorder], pred_trend_smooth[Xorder], lwd = 2, lty = 2)
+legend(2006, 20, legend = c("data", "Smoothing"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+library(FNN)
+fitKNN <- knn.reg(times , y= trend, k=5)
+Xorder <- order(times )
+pred_trend_KNN <- fitKNN$pred
+plot(times , trend, col="red", pch = 19)
+lines(times[Xorder], pred_trend_KNN[Xorder], lwd=2, lty = 2)
+legend(2011, 20, legend = c("data", "KNN"), col = c("red", "black"), 
+       lwd = c(1,2), lty = c(NA,2), pch = c(19, NA))
+library(tseries)
+res <- DecomSTL$time.series[,3]
+runs.test(factor(sign(res)))
+diffRes <- diff(res)
+runs.test(factor(sign(diffRes)))
+model <- arima(diffRes, c(1,0,0), include.mean = F)
+set.seed(2018440)
+predAR <- function(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                   sd = sqrt(model$sigma2),  bound = NULL){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+    }
+  }else{
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + rnorm(1, 0, sd)
+        }
+      }
+    }
+  }
+  R
+}
+predAR1 <- predAR(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                  sd = sqrt(model$sigma2))
+Lfun <- function(par = par, Y = Y){
+  sig <- par[1]
+  phi <- par[2]
+  v <- par[3]
+  Yn <- Y[-1]
+  Yn_1 <- Y[-length(Y)]
+  n <- length(Y)
+  L <- n*(log(gamma((v+1)/2)) - log(gamma(v/2)) - 0.5*log(v*pi)) - n*log(sig) - (v+1)/2*sum(log(1+(Yn - phi*Yn_1)^2/(v*sig^2))) - (v+1)/2*log(1+(1-phi^2)*Y[1]^2/(sig^2*v))
+  L <- -L
+  return(L)
+}
+
+optL <- optim(c(0.5, 0.5,3), Lfun,Y= diffRes)
+optim_proj(optL$par,fun = function(par) Lfun(par = par, Y = diffRes) )
+
+set.seed(2018440)
+predLogAR <- function(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1], bound = NULL ){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+    }
+  }else{
+    for(i in 3 : len){
+      R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          R[i] <- R[i-1] + phi*(R[i - 1] - R[i-2]) + sigma * rt(1, df)
+        }
+      }
+    }
+  }
+  R
+}
+predLogAR1 <- predLogAR(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1])
+
+Rfun <- function(par = par, Y = Y){
+  phiE <- par[1]
+  phiR <- par[2]
+  sig <- par[3]
+  L <- 0
+  for(i in 2:length(Y)){
+    if(Y[i-1]>=0){
+      delta <- 1
+    }else{delta <- 0}
+    L <- L- log(sig) -(Y[i] - (delta*phiE*Y[i-1] + (1 - delta)*phiR*Y[i-1]) )^2/(2*sig^2)
+  }
+  L <- -L
+  return(L)
+}
+
+optR <- optim(c(1, 1,1), Rfun, Y= diffRes)
+optim_proj(optR$par,fun = function(par) Rfun(par = par, Y = diffRes) )
+set.seed(2018440)
+predRSAR <- function(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3], bound = NULL ){
+  R <- rep(0, len-2)
+  R <- c(Rt1, Rt2, R)
+  if(is.null(bound)){
+    for(i in 3 : len){
+      if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+      else{delta <- 0}
+      R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+        (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+    }
+  }else{
+    for(i in 3 : len){
+      if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+      else{delta <- 0}
+      R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+        (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+      if(R[i] > bound[2] || R[i] < bound[1]){
+        while(R[i] > bound[2] || R[i] < bound[1]){
+          if(R[i-1] - R[i-2] >= 0 ){delta <- 1}
+          else{delta <- 0}
+          R[i] <- R[i-1] + delta*phiE * (R[i - 1] - R[i-2]) + 
+            (1-delta) * phiR * (R[i - 1] - R[i-2]) + rnorm(1, 0, sigma)
+        }
+      }
+    }
+  }
+  R
+  
+}
+predRSAR1 <- predRSAR(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3])
+
+
+lmAR <- pred_season + pred_trend_lm + predAR1
+s1 <- sum( (CAE - lmAR)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalAR <- pred_season + pred_trend_smooth + predAR1
+s2 <- sum( (CAE - NaturalAR)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNAR <- pred_season + pred_trend_KNN + predAR1
+s3 <- sum( (CAE - KNNAR)^2)/ sum( (CAE - mean(CAE))^2 )
+lmLog <- pred_season + pred_trend_lm + predLogAR1
+s4 <- sum( (CAE - lmLog)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalLog <- pred_season + pred_trend_smooth + predLogAR1
+s5 <- sum( (CAE - NaturalLog)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNLog <- pred_season + pred_trend_KNN + predLogAR1
+s6 <- sum( (CAE - KNNLog)^2)/ sum( (CAE - mean(CAE))^2 )
+lmRS <- pred_season + pred_trend_lm + predRSAR1
+s7 <- sum( (CAE - lmRS)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalRS <- pred_season + pred_trend_smooth + predRSAR1
+s8 <- sum( (CAE - NaturalRS)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNRS <- pred_season + pred_trend_KNN + predRSAR1
+s9 <- sum( (CAE - KNNRS)^2)/ sum( (CAE - mean(CAE))^2 )
+
+plot(CAE, col = "red", type = "l", ylim = extendrange(c(CAE,KNNAR)))
+lines(times[Xorder], KNNAR[Xorder])
+
+predAR1 <- predAR(Rt1 = 0, Rt2 = 0, phi = model$coef, len = length(times),
+                  sd = sqrt(model$sigma2), bound = c(-3,3))
+predLogAR1 <- predLogAR(Rt1 = 0, Rt2 = 0, phi = optL$par[2], len = length(times), df = optL$par[3], sigma = optL$par[1], bound = c(-3,3) )
+predRSAR1 <- predRSAR(Rt1 = 0, Rt2 = 0, phiE = optR$par[1], phiR = optR$par[2], len = length(times), sigma = optR$par[3], bound = c(-3,3) )
+lmAR <- pred_season + pred_trend_lm + predAR1
+s1 <- sum( (CAE - lmAR)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalAR <- pred_season + pred_trend_smooth + predAR1
+s2 <- sum( (CAE - NaturalAR)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNAR <- pred_season + pred_trend_KNN + predAR1
+s3 <- sum( (CAE - KNNAR)^2)/ sum( (CAE - mean(CAE))^2 )
+lmLog <- pred_season + pred_trend_lm + predLogAR1
+s4 <- sum( (CAE - lmLog)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalLog <- pred_season + pred_trend_smooth + predLogAR1
+s5 <- sum( (CAE - NaturalLog)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNLog <- pred_season + pred_trend_KNN + predLogAR1
+s6 <- sum( (CAE - KNNLog)^2)/ sum( (CAE - mean(CAE))^2 )
+lmRS <- pred_season + pred_trend_lm + predRSAR1
+s7 <- sum( (CAE - lmRS)^2)/ sum( (CAE - mean(CAE))^2 )
+NaturalRS <- pred_season + pred_trend_smooth + predRSAR1
+s8 <- sum( (CAE - NaturalRS)^2)/ sum( (CAE - mean(CAE))^2 )
+KNNRS <- pred_season + pred_trend_KNN + predRSAR1
+s9 <- sum( (CAE - KNNRS)^2)/ sum( (CAE - mean(CAE))^2 )
+# hard margin
+lm0 <- pred_season + pred_trend_lm
+s10 <- sum( (CAE - lm0)^2)/ sum( (CAE - mean(CAE))^2 )
+Natural0 <- pred_season + pred_trend_smooth
+s11 <- sum( (CAE - Natural0)^2)/ sum( (CAE - mean(CAE))^2 )
+KNN0 <- pred_season + pred_trend_KNN
+s12 <- sum( (CAE - KNN0)^2)/ sum( (CAE - mean(CAE))^2 )
+
+plot(CAE, col = "red", type = "l", ylim = extendrange(c(CAE,KNNLog)))
+lines(times[Xorder], KNNAR[Xorder])
+lines(times[Xorder], KNN0[Xorder], col = "blue")
+legend(2006, 25, legend = c("data", "KNN bound", "KNN hard margin"), col = c("red", "black", "blue"),
+       lty = c(1,1,1))
+```
+
+```{r, tidy=TRUE, message=FALSE, warning=FALSE, eval=FALSE}
+library(group88)
+library(xts)
+library(optimCheck)
+load("pricecopy.Rda")
+
+time <- c("2012-01-03", "2017-12-31")
+S <- pricecopy[paste0(time, collapse = "/"),] # data
+S <- na.omit(S)
+
+Y <- getreturns(S, "log")
+T <- nrow(Y)
+D <- ncol(Y)
+
+garch_basic <- ugarchspec(variance.model =list(model = "sGARCH", garchOrder=c(1,1)),
+                          mean.model = list(armaOrder=c(0,0)),
+                          distribution.model = "std")
+
+fit.garch <- lapply(Y, function(x) ugarchfit(garch_basic, x))
+
+eps <- as.matrix(do.call(merge, lapply(fit.garch, residuals)))
+sigma2 <- as.matrix(do.call(merge, lapply(fit.garch, sigma)))^2
+
+
+# -----------------------MLE checck rugarch package-------------------------------------------
+objfun <- function(x) {
+  garch.loglik(x[1], x[2], x[3], x[4], eps, sigma2)
+}
+
+for(i in 1:D) {
+  Xfit <- fit.garch[[i]]@fit$coef[c("omega", "alpha1", "beta1", "shape")]
+  oproj <- optim_proj(fun = objfun,  
+                      xsol = Xfit, 
+                      maximize = FALSE,
+                      xrng = 0.5)  
+  
+}
+
+
+#------------------------test residual distribution---------------------------------------------
+X <- as.matrix(do.call(merge, lapply(fit.garch, residuals, standardize = TRUE)))
+par(mfrow=c(4, 5))
+
+for(i in 1:D) {
+  hist(X[, i], probability = TRUE, main = sprintf("Residual Dist of stock %d", i))
+  lines(seq(-5, 5, length = 100), dnorm(seq(-5, 5, length = 100)))
+}
+
+
+U <- sapply(1:D, function(i) U <- pt(X[,i], df = fit.garch[[i]]@fit$coef["shape"]))
+
+for(i in 1:D) {
+  hist(U[, i], probability = TRUE, main = sprintf("Residual Dist of stock %d", i))
+  lines(seq(-1, 1, length = 100), dunif(seq(-1, 1, length = 100)))
+}
+
+
+
+Z <- qnorm(U)
+
+for(i in 1:D) {
+  hist(Z[, i], probability = TRUE, main = sprintf("Trans Residual Dist %d", i))
+  lines(seq(-5, 5, length = 100), dnorm(seq(-5, 5, length = 100)))
+}
+
+par(mfrow=c(1, 1))
+
+```
+
+
+```{r, tidy=TRUE, message=FALSE, warning=FALSE, eval=FALSE}
+#------------------------sector level hierarchical modelling ----------------------
+group <- c(rep(1,2), rep(2, 17), rep(3, 9), rep(4, 23), rep(5, 2), rep(6, 3), rep(7, 4), rep(8, 3))
+
+T <- nrow(Y)
+D <- ncol(Y)
+
+
+S.sector <- sapply(1: length(unique(group)), function(i) {
+  groupi <- group == i
+  Si <- Z[, groupi]
+  rowMeans(Si)
+})
+
+row.names(S.sector) <- as.character(row.names(X))
+
+
+sigma0 <- var(S.sector)
+Psi0 <- lapply(1:8, function(x) {
+  Zk <- Z[,group == x]
+  cor(Zk)
+})
+
+
+L.cur <- -Inf
+L.prev <-0
+while(abs(L.cur - L.prev) > 0.1) {
+  L.prev <- L.cur
+  
+  S.cur <- S.expect(sigma0, Psi0, Z, group)
+  A <- hier.A(S.cur)
+  B <- hier.B(S.cur, Z, group)
+  
+  sigma0 <- A / T
+  Psi0 <- lapply(B, function(x) x/T)
+  
+  L.cur <- hier.logLik(S.cur, Z, sigma0, Psi0, group)
+}
+
+Vfull <- hier.var(sigma0, Psi0, group)
+
+Var.sector <- lapply(1:length(unique(group)), function(i) {
+  ind <- rep(FALSE, ncol(Vfull))
+  ind[1:length(group)] <- group == i
+  Vfull[ind, ind]
+  
+})
+
+
+#----------------Test mdodel performance---------------------------------------
+B <- 200
+m <- 40
+
+stock.name <- colnames(S)
+
+Y.sim <- lapply(1:B, function(b) {
+  sim <- Garchgc.sim(m, fit.garch, Var.sector, D)
+  colnames(sim) <- colnames(Y)
+  sim
+})
+
+par(mfrow = c(2,2))
+
+# The visualization code is based on sample code from qrm tutorial
+tm <- index(pricecopy)
+start <- match(time[1], as.character(tm))
+past <- tm[start:(start+T-1)]
+future <- tm[(start+T):(start+T+m-1)]
+
+for(i in 1:D) {
+  Ys <- Y[,i]
+  Ys. <- sapply(Y.sim, function(y) y[,i])
+  Ys.mean <- rowMeans(Ys.)
+  Ys.CI <- apply(Ys., 1, function(x) quantile(x, probs = c(0.025, 0.975)))
+  plot(past, Ys, type = "l", xlim = range(c(past, future)), xlab = "", ylab = "", main = stock.name[i]) 
+  polygon(c(future, rev(future)), c(Ys.CI[1,], rev(Ys.CI[2,])),
+        border = NA, col = "grey80") 
+  lines(future, Ys.mean, col = "royalblue3")
+  lines(future, Ys.CI[1,], col = "grey50") 
+  lines(future, Ys.CI[2,], col = "grey50")
+  legend("bottomright", bty = "n", lty = rep(1, 3),
+       col = c("black", "royalblue3", "grey50"),
+       legend = c("Actual Return", "Average Simulated Return",
+                  "95% CI"))
+}
+
+
+
+
+tm <- index(pricecopy)
+start <- match(time[1], as.character(tm))
+past <- tm[start:(start+T-1)]
+future <- tm[(start+T+1):(start+T+m+1)]
+S.actual <- as.matrix(pricecopy[future, ])
+
+S.start <- log(S)
+S.start <- as.matrix(S.start[nrow(S), ])
+
+S.sim <- lapply(Y.sim, function(y){
+  log.sim <- log(S.actual[-41,]) + y
+  exp(log.sim)
+})
+
+pt <- lapply(S.sim, function(s) {
+  s <= S.actual[-1,]
+})
+
+
+pt <- Reduce("+", pt)/ 200
+zt <- qnorm(pt)
+
+par(mfrow = c(3,3))
+
+stock.name <- colnames(S)
+
+stock.names <- numeric(0)
+p.val <- numeric(0)
+
+for(i in 1:D) {
+  zz <- zt[,i]
+  zz <- zz[!is.infinite(zz)]
+  if(length(zz) == 0) next
+  if(is.na(zz)) next
+  k <- shapiro.test(zz) 
+  stock.names <- c(stock.names,  stock.name[i])
+  p.val <- c(p.val, k$p.value)
+  qqnorm(zz, main = stock.name[i])
+}
+
+library(knitr)
+shapiro.result <- matrix(c(stock.names, p.val), ncol=2)
+colnames(shapiro.result) <- c("stock", "p-val")
+kable(shapiro.result)
+```
